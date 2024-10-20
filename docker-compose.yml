@@ -1,0 +1,84 @@
+#version: '3'
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT}:${POSTGRES_PORT}"
+
+
+# ===================================
+# aruba clientes docker
+# ===================================     
+
+  aruba_clientes:
+    build: .
+    depends_on:
+      - db
+    container_name: aruba_clientes  # Nombre del contenedor personalizado
+    ports:
+      - "8020:8020"
+    environment:
+      DB_HOST: db
+      DB_PORT: ${POSTGRES_PORT}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+    env_file:
+      - .env
+    command: ["uvicorn", "epi:app", "--host", "0.0.0.0", "--port", "8020", "--reload"]
+
+
+# ===================================
+# aruba aplicaciones docker
+# =================================== 
+
+  aruba_aplicaciones:
+    build: .
+    depends_on:
+      - aruba_clientes
+    container_name: aruba_aplicaciones  # Nombre del contenedor personalizado
+    ports:
+      - "8030:8030"
+    environment:
+      DB_HOST: db
+      DB_PORT: ${POSTGRES_PORT}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+    env_file:
+      - .env
+    command: ["uvicorn", "top_apps:app", "--host", "0.0.0.0", "--port", "8030", "--reload"]
+
+# ===================================
+# aruba inventario aps docker
+# =================================== 
+
+  aruba_inventario:
+    build: .
+    depends_on:
+      - aruba_aplicaciones
+    container_name: aruba_inventario  # Nombre del contenedor personalizado
+    ports:
+      - "8040:8040"
+    environment:
+      DB_HOST: db
+      DB_PORT: ${POSTGRES_PORT}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+    env_file:
+      - .env
+    command: ["uvicorn", "inventory_aps:app", "--host", "0.0.0.0", "--port", "8040", "--reload"]
+
+
+
+
+
+volumes:
+  pgdata:

@@ -1,0 +1,10 @@
+{
+    "central_info": {
+        "base_url": "https://apigw-uswest4.central.arubanetworks.com",
+        "client_id": "ykcm6qYIYuTRfGsM7bVKxh67iWI3hmTy",
+        "client_secret": "EiOWtAg0WARsSXJZxMXjWbMW1gukKd3W",
+        "last_updated": "2024-09-27 19:55:37",
+        "expires_in": 7200
+    },
+    "ssl_verify": true
+}
