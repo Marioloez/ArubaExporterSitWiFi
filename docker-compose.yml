@@ -1,68 +1,84 @@
-version: '3'
-
+#version: '3'
 services:
-  prometheus:
-    image: prom/prometheus
-    container_name: prometheus
-    user: "root"
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     ports:
-      - "9091:9090"  
-    volumes:
-      - /opt/prometheus:/prometheus:rw
-      - /etc/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.min-block-duration=2h'
-      - '--storage.tsdb.max-block-duration=2h'
-      - '--storage.tsdb.retention.time=6h'
-    networks:
-      - aruba_default
+      - "${POSTGRES_PORT}:${POSTGRES_PORT}"
 
-  thanos-sidecar:
-    image: quay.io/thanos/thanos:v0.32.2
-    container_name: thanos-sidecar
-    user: "root"
-    command:
-      - sidecar
-      - --tsdb.path=/prometheus
-      - --prometheus.url=http://prometheus:9090
-      - --objstore.config-file=/etc/thanos/objstore.yml
-    volumes:
-      - /opt/prometheus:/prometheus:rw
-      - ./thanos-config:/etc/thanos:rw
-    networks:
-      - aruba_default
 
-  thanos-query:
-    image: quay.io/thanos/thanos:v0.32.2
-    container_name: thanos-query
+# ===================================
+# aruba clientes docker
+# ===================================     
+
+  aruba_clientes:
+    build: .
+    depends_on:
+      - db
+    container_name: aruba_clientes  # Nombre del contenedor personalizado
     ports:
-      - "10902:10902"
-    command:
-      - query
-      - --http-address=0.0.0.0:10902
-      - --store=thanos-sidecar:10901
-      - --store=thanos-store:10901
-    networks:
-      - aruba_default
+      - "8020:8020"
+    environment:
+      DB_HOST: db
+      DB_PORT: ${POSTGRES_PORT}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+    env_file:
+      - .env
+    command: ["uvicorn", "epi:app", "--host", "0.0.0.0", "--port", "8020", "--reload"]
 
-  thanos-store:
-    image: quay.io/thanos/thanos:v0.32.2
-    container_name: thanos-store
-    user: "1000:1000"
-    command:
-      - store
-      - --objstore.config-file=/etc/thanos/objstore.yml
-      - --data-dir=/data
-      - --grpc-address=0.0.0.0:10901
-      - --http-address=0.0.0.0:10902
-    volumes:
-      - ./thanos-config:/etc/thanos:rw
-      - ./data:/data:rw
-    networks:
-      - aruba_default
 
-networks:
-  aruba_default:
-    external: true
+# ===================================
+# aruba aplicaciones docker
+# =================================== 
+
+  aruba_aplicaciones:
+    build: .
+    depends_on:
+      - aruba_clientes
+    container_name: aruba_aplicaciones  # Nombre del contenedor personalizado
+    ports:
+      - "8030:8030"
+    environment:
+      DB_HOST: db
+      DB_PORT: ${POSTGRES_PORT}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+    env_file:
+      - .env
+    command: ["uvicorn", "top_apps:app", "--host", "0.0.0.0", "--port", "8030", "--reload"]
+
+# ===================================
+# aruba inventario aps docker
+# =================================== 
+
+  aruba_inventario:
+    build: .
+    depends_on:
+      - aruba_aplicaciones
+    container_name: aruba_inventario  # Nombre del contenedor personalizado
+    ports:
+      - "8040:8040"
+    environment:
+      DB_HOST: db
+      DB_PORT: ${POSTGRES_PORT}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+    env_file:
+      - .env
+    command: ["uvicorn", "inventory_aps:app", "--host", "0.0.0.0", "--port", "8040", "--reload"]
+
+
+
+
+
+volumes:
+  pgdata:
