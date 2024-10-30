@@ -1,3 +1,8 @@
 venv/
 pg_hba.conf
 .env
+# Ignorar archivos .pyc
+*.pyc
+# Ignorar carpetas __pycache__
+__pycache__/
+*.log

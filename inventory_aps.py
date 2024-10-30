@@ -300,7 +300,7 @@ def collect_and_push_inventory_aps_periodically():
             push_inventory_aps_to_gateway(inventory_result)
 
         # Esperar 5 minutos antes de la próxima recolección
-        time.sleep(300)
+        time.sleep(600)
 
 # Iniciar FastAPI con el manejador de ciclo de vida
 @asynccontextmanager

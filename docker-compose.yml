@@ -77,8 +77,27 @@ services:
     command: ["uvicorn", "inventory_aps:app", "--host", "0.0.0.0", "--port", "8040", "--reload"]
 
 
+# ===================================
+# aruba aplicaciones por cliente docker
+# ===================================   
 
 
+  aruba_apps_per_client:
+    build: .
+    depends_on:
+      - aruba_inventario
+    container_name: aruba_apps_per_client  
+    ports:
+      - "8050:8050"
+    environment:
+      DB_HOST: db
+      DB_PORT: ${POSTGRES_PORT}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+    env_file:
+      - .env
+    command: ["uvicorn", "tops_apps_clients:app", "--host", "0.0.0.0", "--port", "8050", "--reload"]
 
 volumes:
   pgdata:
