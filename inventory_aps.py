@@ -247,7 +247,7 @@ def push_inventory_aps_to_gateway(inventory_result):
         # Extraer los campos requeridos y normalizar los nombres
         ap_name = ap.get('name', 'unknown').replace(" ", "_")
         serial = ap.get('serial', 'unknown')
-        site = ap.get('site', 'unknown').replace(" ", "_")
+        site = (ap.get('site') or 'unknown').replace(" ", "_")
         group_name = ap.get('group_name', 'unknown').replace(" ", "_")
         ip_address = ap.get('ip_address', 'unknown')
         macaddr = ap.get('macaddr', 'unknown')
@@ -282,11 +282,11 @@ def push_inventory_aps_to_gateway(inventory_result):
         ap_last_modified_gauge.labels(*metric_labels).set(last_modified)
     
     # Enviar métricas al Pushgateway
-    push_to_gateway('172.18.0.4:9091', job='inventory_aps', registry=inventory_registry)
+    push_to_gateway('pushgateway_aruba:9091', job='inventory_aps', registry=inventory_registry)
     logging.info("Métricas de inventario de APs enviadas al Pushgateway")
     
     # Enviar métricas de la API al Pushgateway
-    push_to_gateway('172.18.0.4:9091', job='inventory_aps_api_metrics', registry=api_metrics_registry)
+    push_to_gateway('pushgateway_aruba:9091', job='inventory_aps_api_metrics', registry=api_metrics_registry)
     logging.info("Métricas de rendimiento de la API enviadas al Pushgateway")
 
 # Función para recolectar y exportar las métricas cada 5 minutos

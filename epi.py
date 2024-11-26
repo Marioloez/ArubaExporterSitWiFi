@@ -7,17 +7,13 @@ import logging
 import psycopg2
 from psycopg2 import sql
 from threading import Thread
-from fastapi import FastAPI
 from datetime import datetime, timedelta
 import re
-from contextlib import asynccontextmanager
-from prometheus_client import CollectorRegistry, Gauge, Counter, Histogram, push_to_gateway
+from prometheus_client import CollectorRegistry, Gauge, Counter, push_to_gateway
 from dotenv import load_dotenv
-import os
 
 # Cargar variables de entorno desde el archivo .env
 load_dotenv()
-
 
 # Configuración básica de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,7 +29,7 @@ class TokenManager:
             password=os.getenv("POSTGRES_PASSWORD"),
             host=os.getenv("POSTGRES_HOST"),
             port=os.getenv("POSTGRES_PORT")
-)
+        )
         self.connection.autocommit = True
         self.cursor = self.connection.cursor()
         self.central_info = self.get_token_from_db()
@@ -175,6 +171,7 @@ def verify_or_create_client_history_table():
     create_table_query = """
     CREATE TABLE IF NOT EXISTS client_history (
         id SERIAL PRIMARY KEY,
+        batch_id BIGINT,
         macaddr VARCHAR(50),
         maxspeed BIGINT,
         name VARCHAR(255),
@@ -200,6 +197,19 @@ def verify_or_create_client_history_table():
     except Exception as e:
         logging.error(f"Error al crear la tabla 'client_history': {e}")
 
+def verify_or_create_aruba_ilusion_aggregations_table():
+    create_table_query = """
+    CREATE TABLE IF NOT EXISTS aruba_ilusion_aggregations (
+        batch_id BIGINT PRIMARY KEY,
+        total_clients BIGINT,
+        timestamp TIMESTAMP NOT NULL
+    );
+    """
+    try:
+        cursor.execute(create_table_query)
+        logging.info("Tabla 'aruba_ilusion_aggregations' verificada o creada exitosamente.")
+    except Exception as e:
+        logging.error(f"Error al crear la tabla 'aruba_ilusion_aggregations': {e}")
 
 # Verificar si las columnas existen en la tabla
 def verify_or_create_columns():
@@ -234,8 +244,8 @@ def verify_or_create_columns():
 def setup_database():
     verify_or_create_clients_table()
     verify_or_create_columns()
-    verify_or_create_client_history_table()  # Añadir esta línea
-
+    verify_or_create_client_history_table()
+    verify_or_create_aruba_ilusion_aggregations_table()
 
 # Definir las métricas de rendimiento de la API
 def setup_api_metrics():
@@ -245,28 +255,27 @@ def setup_api_metrics():
     api_requests_counter = Counter(
         'api_requests_total', 
         'Total number of API requests made', 
-        ['user_experience'],  # Añadir etiqueta 'user_experience'
+        ['user_experience'],
         registry=registry
     )
     api_requests_success_counter = Counter(
         'api_requests_success_total', 
         'Total number of successful API requests', 
-        ['user_experience'],  # Añadir etiqueta 'user_experience'
+        ['user_experience'],
         registry=registry
     )
     api_requests_failure_counter = Counter(
         'api_requests_failure_total', 
         'Total number of failed API requests', 
-        ['user_experience'],  # Añadir etiqueta 'user_experience'
+        ['user_experience'],
         registry=registry
     )
     api_request_duration_gauge = Gauge(
         'api_request_duration_milliseconds',
         'Duration of API requests in milliseconds',
-        ['user_experience'],  # Añadir etiqueta 'user_experience'
+        ['user_experience'],
         registry=registry
     )
-
 
     # Métricas de clientes inalámbricos
     avg_signal_db_gauge = Gauge('average_signal_db', 'Average signal strength of wireless clients', registry=registry)
@@ -289,7 +298,6 @@ def setup_api_metrics():
         'api_requests_success_counter': api_requests_success_counter,
         'api_requests_failure_counter': api_requests_failure_counter,
         'api_request_duration_gauge': api_request_duration_gauge,
-        # Agregar las nuevas métricas al diccionario
         'avg_signal_db_gauge': avg_signal_db_gauge,
         'avg_snr_gauge': avg_snr_gauge,
         'avg_usage_gauge': avg_usage_gauge,
@@ -301,7 +309,6 @@ def setup_api_metrics():
         'min_usage_gauge': min_usage_gauge,
         'total_clients_gauge': total_clients_gauge
     }
-
 
 def make_api_request(api_path, method="GET", params=None, retry=False, metrics=None):
     if not token_manager.verify_and_refresh_token():
@@ -315,8 +322,8 @@ def make_api_request(api_path, method="GET", params=None, retry=False, metrics=N
     url = f"{token_manager.base_url}{api_path}"
     logging.info(f"Haciendo solicitud a {url}")
 
-    # Valor de la etiqueta (puedes ajustarlo según tus necesidades)
-    user_experience_label = 'true'  # O cualquier valor que quieras asignar
+    # Valor de la etiqueta
+    user_experience_label = 'true'
 
     # Incrementar el contador de solicitudes totales
     if metrics:
@@ -365,7 +372,6 @@ def make_api_request(api_path, method="GET", params=None, retry=False, metrics=N
         logging.error(f"Excepción al realizar la solicitud a la API: {e}")
         return {"error": f"Excepción al realizar la solicitud: {e}"}
 
-
 # Función para limpiar el valor de `channel`
 def extract_channel(channel_value):
     try:
@@ -383,23 +389,14 @@ def clean_text(value):
         return value.replace('\x00', '')
     return value
 
-
-
 # ============================================
 # PARA ALMACENAMIENTO ACTUAL DE CLIENTES
 # ============================================
-
 
 # Función para almacenar los clientes en PostgreSQL
 def store_clients_in_postgresql(all_clients):
     logging.info("Almacenando clientes en PostgreSQL...")
 
-    clients_in_db = set()
-    cursor.execute("SELECT macaddr FROM clients")
-    for client in cursor.fetchall():
-        clients_in_db.add(client[0])
-
-    clients_eliminados = 0
     now = datetime.now()
 
     for client in all_clients:
@@ -448,32 +445,21 @@ def store_clients_in_postgresql(all_clients):
             client_cleaned['associated_device_name'], now
         ))
 
-        if client_cleaned['macaddr'] in clients_in_db:
-            clients_in_db.remove(client_cleaned['macaddr'])
-
-    # Eliminar clientes que ya no están conectados
-    for client_mac in clients_in_db:
-        cursor.execute("DELETE FROM clients WHERE macaddr = %s", (client_mac,))
-        clients_eliminados += 1
-        logging.info(f"Cliente {client_mac} eliminado de PostgreSQL porque ya no está conectado.")
-
     logging.info(f"{len(all_clients)} clientes almacenados y actualizados en PostgreSQL correctamente.")
-    logging.info(f"{clients_eliminados} clientes eliminados de PostgreSQL en este ciclo.")
 
 # ============================================
-# PARA ALMACENAMIENTO HISTORICO DE CLIENTES
+# PARA ALMACENAMIENTO HISTÓRICO DE CLIENTES
 # ============================================
 
-
-def store_clients_history(all_clients):
+def store_clients_history(all_clients, batch_id):
     logging.info("Almacenando historial de clientes en PostgreSQL...")
 
     now = datetime.now()
 
     insert_query = sql.SQL("""
-        INSERT INTO client_history (macaddr, maxspeed, name, network, os_type, ip_address, signal_db, site, snr, band,
+        INSERT INTO client_history (batch_id, macaddr, maxspeed, name, network, os_type, ip_address, signal_db, site, snr, band,
             channel, speed, usage, vlan, associated_device_mac, associated_device_name, timestamp)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
     """)
 
     for client in all_clients:
@@ -482,6 +468,7 @@ def store_clients_history(all_clients):
             continue
 
         client_cleaned = {
+            'batch_id': batch_id,
             'macaddr': clean_text(client.get('macaddr', 'unknown')),
             'maxspeed': client.get('maxspeed', 0),
             'name': clean_text(client.get('name', 'unknown')),
@@ -503,7 +490,7 @@ def store_clients_history(all_clients):
 
         try:
             cursor.execute(insert_query, (
-                client_cleaned['macaddr'], client_cleaned['maxspeed'], client_cleaned['name'],
+                client_cleaned['batch_id'], client_cleaned['macaddr'], client_cleaned['maxspeed'], client_cleaned['name'],
                 client_cleaned['network'], client_cleaned['os_type'], client_cleaned['ip_address'],
                 client_cleaned['signal_db'], client_cleaned['site'], client_cleaned['snr'],
                 client_cleaned['band'], client_cleaned['channel'], client_cleaned['speed'],
@@ -516,7 +503,23 @@ def store_clients_history(all_clients):
     conn.commit()
     logging.info(f"Historial de {len(all_clients)} clientes almacenado correctamente.")
 
+def store_batch_info(batch_id, total_clients):
+    logging.info("Almacenando información del lote en 'aruba_ilusion_aggregations'...")
 
+    now = datetime.now()
+
+    insert_query = sql.SQL("""
+        INSERT INTO aruba_ilusion_aggregations (batch_id, total_clients, timestamp)
+        VALUES (%s, %s, %s);
+    """)
+
+    try:
+        cursor.execute(insert_query, (batch_id, total_clients, now))
+        conn.commit()
+        logging.info(f"Información del lote {batch_id} almacenada correctamente en 'aruba_ilusion_aggregations'.")
+    except Exception as e:
+        logging.error(f"Error al insertar información del lote {batch_id}: {e}")
+        conn.rollback()
 
 def calculate_metrics(all_clients):
     logging.info(f"Calculando métricas para {len(all_clients)} clientes.")
@@ -600,9 +603,8 @@ def push_metrics_to_gateway(metrics, total_clients, api_metrics):
     total_clients_gauge.set(total_clients)
 
     # Enviar todas las métricas al Pushgateway
-    push_to_gateway('pushgateway:9091', job='wireless_clients_statistics', registry=registry)
+    push_to_gateway('pushgateway_aruba:9091', job='wireless_clients_statistics', registry=registry)
     logging.info("Métricas enviadas al Pushgateway exitosamente.")
-
 
 # Recolectar los datos de clientes inalámbricos y calcular las métricas
 def collect_wireless_clients():
@@ -611,6 +613,10 @@ def collect_wireless_clients():
 
     while True:
         logging.info("Iniciando la recolección de clientes inalámbricos...")
+
+        # Generar un batch_id único (puede ser un timestamp o un incremental)
+        batch_id = int(time.time())
+        logging.info(f"Batch ID generado: {batch_id}")
 
         wireless_clients_params = {
             "limit": 1000,
@@ -641,33 +647,27 @@ def collect_wireless_clients():
             total_clients = len(all_clients)
             logging.info(f"Total de clientes recolectados: {total_clients}")
             # Llamada a la función para almacenar los clientes en PostgreSQL
-            store_clients_history(all_clients)
+            store_clients_history(all_clients, batch_id)
             store_clients_in_postgresql(all_clients)
+            # Almacenar información del lote en 'aruba_ilusion_aggregations'
+            store_batch_info(batch_id, total_clients)
             metrics = calculate_metrics(all_clients)
             push_metrics_to_gateway(metrics, total_clients, api_metrics)
         else:
             logging.info("No se encontraron clientes inalámbricos conectados.")
 
+        time.sleep(600)
 
-        time.sleep(300)
-
-# Iniciar FastAPI con el manejador de ciclo de vida
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+if __name__ == "__main__":
     # Código de inicio
-    logging.info("Iniciando FastAPI y la recolección de clientes inalámbricos.")
+    logging.info("Iniciando la recolección de clientes inalámbricos.")
     setup_database()  # Verifica la base de datos al iniciar
     thread = Thread(target=collect_wireless_clients, daemon=True)
     thread.start()
 
-    yield  # Aquí el servidor estará ejecutándose
-
-    # Código de apagado (si es necesario)
-    logging.info("Apagando FastAPI y deteniendo la recolección de clientes inalámbricos.")
-    # Si necesitas detener el hilo u otros recursos, puedes hacerlo aquí
-
-app = FastAPI(lifespan=lifespan)
-
-@app.get("/")
-def read_root():
-    return {"message": "API para recolección de clientes inalámbricos"}
+    # Mantener el programa en ejecución
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logging.info("Programa detenido por el usuario.")

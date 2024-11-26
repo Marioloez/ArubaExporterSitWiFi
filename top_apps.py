@@ -248,11 +248,11 @@ def push_topn_stats_to_gateway(topn_stats_result):
         tx_gauge.labels(app_name=app_name).set(app['tx'])
 
     # Enviar métricas de las aplicaciones al Pushgateway
-    push_to_gateway('172.18.0.4:9091', job='topn_stats_job', registry=app_registry)
+    push_to_gateway('pushgateway_aruba:9091', job='topn_stats_job', registry=app_registry)
     logging.info("Métricas de Top N stats enviadas al Pushgateway")
 
     # Enviar métricas de la API al Pushgateway
-    push_to_gateway('172.18.0.4:9091', job='topn_stats_api_metrics', registry=api_metrics_registry)
+    push_to_gateway('pushgateway_aruba:9091', job='topn_stats_api_metrics', registry=api_metrics_registry)
     logging.info("Métricas de rendimiento de la API enviadas al Pushgateway")
 
 

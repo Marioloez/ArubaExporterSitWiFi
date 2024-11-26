@@ -15,6 +15,10 @@ load_dotenv()
 # Configuración básica de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Inicializar la caché en memoria
+cache = {}
+CACHE_DURATION = timedelta(minutes=10)  # Duración de la caché (10 minutos)
+
 # ============================================
 # GESTIÓN DE TOKENS
 # ============================================
@@ -121,6 +125,24 @@ class TokenManager:
 token_manager = TokenManager()
 
 # ============================================
+# MÉTRICAS DE RENDIMIENTO DE LA API
+# ============================================
+api_metrics_registry = CollectorRegistry()
+
+# Crear métricas de rendimiento de la API
+api_requests_counter = Counter(
+    'api_requests_total',
+    'Total number of API requests made',
+    ['status'],
+    registry=api_metrics_registry
+)
+api_request_duration_gauge = Gauge(
+    'api_request_duration_milliseconds',
+    'Duration of API requests in milliseconds',
+    registry=api_metrics_registry
+)
+
+# ============================================
 # CONSULTA A LA API /apprf/datapoints/v2/topn_stats
 # ============================================
 
@@ -137,16 +159,25 @@ def make_api_request(api_path, params=None, retry=False):
     url = f"{token_manager.base_url}{api_path}"
     logging.info(f"Haciendo solicitud a {url} con parámetros {params}")
 
+    start_time = datetime.now()
     try:
         response = requests.get(url, headers=headers, params=params)
+
+        # Calcular la duración de la solicitud en milisegundos
+        duration_ms = (datetime.now() - start_time).total_seconds() * 1000
+        api_request_duration_gauge.set(duration_ms)
+
         if response.status_code == 200:
             logging.info("Solicitud a la API exitosa.")
+            api_requests_counter.labels(status='success').inc()
             return response.json()
         else:
             logging.error(f"Error en la petición: {response.status_code}, {response.text}")
+            api_requests_counter.labels(status='failure').inc()
             return {"error": f"Error en la petición: {response.status_code}, {response.text}"}
 
     except Exception as e:
+        api_requests_counter.labels(status='exception').inc()
         logging.error(f"Excepción al realizar la solicitud a la API: {e}")
         return {"error": f"Excepción al realizar la solicitud: {e}"}
 
@@ -169,12 +200,27 @@ def desglosar_topn_stats(topn_stats_result):
 
     return desglosado
 
+# Función para enviar métricas de la API al Pushgateway
+def push_api_metrics_to_gateway():
+    push_to_gateway('pushgateway_aruba:9091', job='topn_stats_per_client', registry=api_metrics_registry)
+    logging.info("Métricas de rendimiento de la API enviadas al Pushgateway")
+
 # Iniciar FastAPI
 app = FastAPI()
 
+# Endpoint para obtener Top N stats con caché
 @app.get("/topn_stats")
 def get_topn_stats(macaddr: str):
-    # Realizar la consulta a la API
+    current_time = datetime.now()
+
+    # Verificar si la MAC está en caché y no ha expirado
+    if macaddr in cache:
+        cache_entry = cache[macaddr]
+        if current_time - cache_entry['timestamp'] <= CACHE_DURATION:
+            logging.info(f"Usando caché para la MAC: {macaddr}")
+            return cache_entry['data']
+
+    # Si no está en caché o la caché ha expirado, realizar la consulta a la API
     topn_stats_result = make_api_request("/apprf/datapoints/v2/topn_stats", params={"count": 10, "metrics": "app_id", "macaddr": macaddr})
 
     if "error" in topn_stats_result:
@@ -182,5 +228,14 @@ def get_topn_stats(macaddr: str):
 
     # Desglosar los resultados de la API
     desglosado = desglosar_topn_stats(topn_stats_result)
+
+    # Almacenar en caché la respuesta con la marca de tiempo actual
+    cache[macaddr] = {
+        'data': desglosado,
+        'timestamp': current_time
+    }
+
+    # Enviar métricas de rendimiento al Pushgateway
+    push_api_metrics_to_gateway()
 
     return desglosado
